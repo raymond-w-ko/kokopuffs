@@ -3,6 +3,11 @@ Some (hopefully) fast and efficient C++11 data structures
 
 Mostly written as interview practice, but they might be useful someday.
 
+## Requirements
+1. Header Only (no compiled portions)
+2. Zero Config (no platform specific config.hpp file needed like Google's sparsehash)
+3. Similar to standard C++ STL's interface as much as possible (so you only relearn as few things as possible).
+
 ```cpp
 #include <kokopuffs/map.hpp>
 ```
