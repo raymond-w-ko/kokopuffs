@@ -1,3 +1,5 @@
+#pragma once
+
 #include <stdint.h>
 #include <memory>
 #include <exception>
@@ -5,6 +7,10 @@
 
 #include <iostream>
 #include <iomanip>
+
+#if defined(_DEBUG) || defined(DEBUG) && !defined(NDEBUG) && !defined(_NDEBUG)
+#define KOKODEBUG
+#endif
 
 namespace kokopuffs {
 
@@ -19,21 +25,12 @@ class map {
     uint32_t hash;
     Key key;
     Value value;
-    /* size_t intended_bucket; */
+#ifdef KOKODEBUG
+    size_t intended_bucket;
+#endif
   };
   
  private:
-  static void delete_table(Entry* table, size_t bucket_count) {
-    for (size_t i = 0; i < bucket_count; ++i) {
-      Entry& entry = table[i];
-      entry.key.~Key();
-      if (entry.value_initialized) {
-        entry.value.~Value();
-      }
-    }
-    free(table);
-  }
-  
   static Entry* create_table(size_t bucket_count) {
     Entry* table  = (Entry*)malloc(bucket_count * sizeof(Entry));
     for (size_t i = 0; i < bucket_count; ++i) {
@@ -44,6 +41,17 @@ class map {
       new (&entry.key) Key();
     }
     return table;
+  }
+  
+  static void delete_table(Entry* table, size_t bucket_count) {
+    for (size_t i = 0; i < bucket_count; ++i) {
+      Entry& entry = table[i];
+      entry.key.~Key();
+      if (entry.value_initialized) {
+        entry.value.~Value();
+      }
+    }
+    free(table);
   }
   
  public:
@@ -61,29 +69,7 @@ class map {
   
   Value& operator[](const Key& key) {
     uint32_t hash = get_hash(key);
-    size_t index = (size_t)-1;
-    
-refind_slot:
-    if (_find(key, hash, index)) {
-      return table_[index].value;
-    }
-    
-    if (maybe_resize()) {
-      goto refind_slot;
-    }
-    
-    Entry& entry = table_[index];
-    if (!entry.value_initialized) {
-      item_count_++;
-      entry.key.~Key();
-      entry.hash = hash;
-      new (&entry.key) Key(key);
-      new (&entry.value) Value();
-      entry.value_initialized = true;
-      entry.busy = true;
-      /* entry.intended_bucket = hash % bucket_count_; */
-    }
-    return entry.value;
+    return _find_or_insert(key, hash);
   }
   
   size_t erase(const Key& key) {
@@ -121,7 +107,9 @@ refind_slot:
       if (entry.key != invalid_key_) {
         cout << " key: " << entry.key << " "
             << "hash: " << entry.hash << " "
-            /* << "intended_bucket: " << entry.intended_bucket << " " */
+#ifdef KOKODEBUG
+            << "intended_bucket: " << entry.intended_bucket << " "
+#endif
             ;
         if (entry.value_initialized) {
           cout << "value: " << entry.value << "";
@@ -136,28 +124,74 @@ refind_slot:
     /* return 1; */
     uint32_t hash = 5381;
     for (size_t i = 0; i < key.size(); ++i) {
-      hash = hash * 31 + key[i];
+      hash = hash * 31 ^ key[i];
     }
     return hash;
   }
   
+  size_t size() const noexcept {
+    return item_count_;
+  }
+  
  private:
+  Value& _find_or_insert(const Key& key, uint32_t hash) {
+refind_slot:
+    size_t index = (size_t)-1;
+    if (_find(key, hash, index)) {
+      return table_[index].value;
+    }
+    
+    if (maybe_resize()) {
+      goto refind_slot;
+    }
+    
+    Entry& entry = table_[index];
+    _emplace_entry(entry, key, hash);
+    return entry.value;
+  }
+  
+  template <typename... Args>
+  void _emplace_entry(Entry& entry,
+                      const Key& key, uint32_t hash, Args&&... args) {
+    if (entry.value_initialized)
+      return;
+    
+    item_count_++;
+    entry.key.~Key();
+    entry.hash = hash;
+    new (&entry.key) Key(key);
+    new (&entry.value) Value(args...);
+    entry.value_initialized = true;
+    entry.busy = true;
+#ifdef KOKODEBUG
+    entry.intended_bucket = hash % bucket_count_;
+#endif
+  }
+  
   bool maybe_resize() {
     if (((float)item_count_ / bucket_count_) <= load_factor_)
       return false;
     
     Entry* oldtable = table_;
-    size_t oldcount = bucket_count_;
+    const size_t oldcount = bucket_count_;
 
     bucket_count_ *= 2;
     item_count_ = 0;
     table_ = create_table(bucket_count_);
 
     for (size_t i = 0; i < oldcount; ++i) {
-      Entry& oldentry = oldtable[i];
+      const Entry& oldentry = oldtable[i];
       if (oldentry.key != invalid_key_) {
+#ifdef KOKODEBUG
         assert(oldentry.value_initialized);
-        (*this)[oldentry.key] = oldentry.value;
+#endif
+        /* (*this)[oldentry.key] = oldentry.value; */
+        size_t newindex = (size_t)-1;
+        // assume that this will always be successful since we are resizing and
+        // this it will always fit
+        _find(oldentry.key, oldentry.hash, newindex);
+        Entry& newentry = table_[newindex];
+        _emplace_entry(newentry, oldentry.key, oldentry.hash, oldentry.value);
       }
     }
 
@@ -208,10 +242,14 @@ refind_slot:
   }
   
   size_t bucket_count_;
-  float load_factor_;
   size_t item_count_;
+  float load_factor_;
   Key invalid_key_;
   Entry* table_;
 };
+
+#ifdef KOKODEBUG
+#undef KOKODEBUG
+#endif
 
 }
