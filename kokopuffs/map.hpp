@@ -7,6 +7,7 @@
 
 #include <iostream>
 #include <iomanip>
+#include <sstream>
 
 #if defined(_DEBUG) || defined(DEBUG) && !defined(NDEBUG) && !defined(_NDEBUG)
 #define KOKODEBUG
@@ -20,7 +21,7 @@ class map {
     kInitialSize = 16,
   };
   struct Entry {
-    bool value_initialized;
+    bool initialized;
     bool busy;
     uint32_t hash;
     Key key;
@@ -32,22 +33,32 @@ class map {
   
  private:
   static Entry* create_table(size_t bucket_count) {
-    Entry* table  = (Entry*)malloc(bucket_count * sizeof(Entry));
+    size_t n = bucket_count * sizeof(Entry);
+    Entry* table  = (Entry*)malloc(n);
+    /*
     for (size_t i = 0; i < bucket_count; ++i) {
       Entry& entry = table[i];
-      entry.value_initialized = false;
+      entry.initialized = false;
       entry.busy = false;
       entry.hash = 0;
-      new (&entry.key) Key();
+#ifdef KOKODEBUG
+      entry.intended_bucket = 0;
+#endif
     }
+    */
+    // since all fields are mostly equivalent to 0, we can cheat and use
+    // memset, however, in case we need to use structures that aren't
+    // equivalent to zero, then we have to delete below and initialize in a for
+    // loop above.
+    ::memset(table, 0, n);
     return table;
   }
   
   static void delete_table(Entry* table, size_t bucket_count) {
     for (size_t i = 0; i < bucket_count; ++i) {
       Entry& entry = table[i];
-      entry.key.~Key();
-      if (entry.value_initialized) {
+      if (entry.initialized) {
+        entry.key.~Key();
         entry.value.~Value();
       }
     }
@@ -56,10 +67,10 @@ class map {
   
  public:
   map(size_t initial_table_size = kInitialSize, float load_factor = 0.5)
-      : load_factor_(load_factor),
-        item_count_(0)
+      : bucket_count_(kInitialSize),
+        item_count_(0),
+        load_factor_(load_factor)
   {
-    bucket_count_ = initial_table_size;
     table_ = create_table(bucket_count_);
   }
   
@@ -81,8 +92,8 @@ class map {
     
     Entry& entry = table_[index];
     entry.hash = 0;
-    entry.value_initialized = false;
-    entry.key = invalid_key_;
+    entry.initialized = false;
+    entry.key.~Key();
     entry.value.~Value();
     
     --item_count_;
@@ -92,32 +103,32 @@ class map {
   
   void _debug() {
     using namespace std;
-    cout << "sizeof(Entry): " << sizeof(Entry) << "\n";
-    cout << "sizeof(bool): " << sizeof(bool) << "\n";
-    cout << "sizeof(uint32_t): " << sizeof(uint32_t) << "\n";
-    cout << "sizeof(Key): " << sizeof(Key) << "\n";
-    cout << "sizeof(Value): " << sizeof(Value) << "\n";
-    cout << "item_count_: " << item_count_ << "\n";
-    cout << "bucket_count_: " << bucket_count_ << "\n";
-    cout << "load: " << (float)item_count_ / bucket_count_ << "\n";
-    cout << "invalid_key_: *" << invalid_key_ << "*\n";
+    stringstream ss;
+    /* ss << hex; */
+    ss << "sizeof(Entry): " << sizeof(Entry) << "\n";
+    ss << "sizeof(bool): " << sizeof(bool) << "\n";
+    ss << "sizeof(uint32_t): " << sizeof(uint32_t) << "\n";
+    ss << "sizeof(Key): " << sizeof(Key) << "\n";
+    ss << "sizeof(Value): " << sizeof(Value) << "\n";
+    ss << "item_count_: " << item_count_ << "\n";
+    ss << "bucket_count_: " << bucket_count_ << "\n";
+    ss << "load: " << (float)item_count_ / bucket_count_ << "\n";
     for (size_t i = 0; i < bucket_count_; ++i) {
       Entry& entry = table_[i];
-      cout << "bucket " << i << ": " << " busy " << entry.busy;
-      if (entry.key != invalid_key_) {
-        cout << " key: " << entry.key << " "
-            << "hash: " << entry.hash << " "
+      ss << "bucket " << i << ": " << " busy " << entry.busy << " "
+           << "hash " << std::hex << entry.hash << " "
 #ifdef KOKODEBUG
-            << "intended_bucket: " << entry.intended_bucket << " "
+           << "intended_bucket: " << entry.intended_bucket << " "
 #endif
             ;
-        if (entry.value_initialized) {
-          cout << "value: " << entry.value << "";
-        }
+      if (entry.initialized) {
+        ss << "key: " << entry.key << " ";
+        ss << "value: " << entry.value << "";
       }
-      cout << "\n";
+      ss << "\n";
     }
-    cout << "----------------------------------------\n";
+    ss << "----------------------------------------\n";
+    cout << ss.str();
   }
   
   uint32_t get_hash(const Key& key) {
@@ -153,15 +164,14 @@ refind_slot:
   template <typename... Args>
   void _emplace_entry(Entry& entry,
                       const Key& key, uint32_t hash, Args&&... args) {
-    if (entry.value_initialized)
+    if (entry.initialized)
       return;
     
     item_count_++;
-    entry.key.~Key();
     entry.hash = hash;
     new (&entry.key) Key(key);
     new (&entry.value) Value(args...);
-    entry.value_initialized = true;
+    entry.initialized = true;
     entry.busy = true;
 #ifdef KOKODEBUG
     entry.intended_bucket = hash % bucket_count_;
@@ -181,9 +191,9 @@ refind_slot:
 
     for (size_t i = 0; i < oldcount; ++i) {
       const Entry& oldentry = oldtable[i];
-      if (oldentry.key != invalid_key_) {
+      if (oldentry.initialized) {
 #ifdef KOKODEBUG
-        assert(oldentry.value_initialized);
+        assert(oldentry.initialized);
 #endif
         /* (*this)[oldentry.key] = oldentry.value; */
         size_t newindex = (size_t)-1;
@@ -219,13 +229,13 @@ refind_slot:
         return false;
       }
       
-      if (!entry.value_initialized && !found_empty_index) {
+      if (!entry.initialized && !found_empty_index) {
         found_empty_index = true;
         emtpy_index = index;
         /* std::cout << "empty " << index << "\n"; */
       }
       
-      if (entry.hash == hash && entry.key == key) {
+      if (entry.initialized && entry.hash == hash && entry.key == key) {
         found_index = index;
         return true;
       }
@@ -244,7 +254,6 @@ refind_slot:
   size_t bucket_count_;
   size_t item_count_;
   float load_factor_;
-  Key invalid_key_;
   Entry* table_;
 };
 

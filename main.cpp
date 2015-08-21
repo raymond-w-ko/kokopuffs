@@ -55,7 +55,7 @@ int main() {
   std::cout << m["xyzzy"] << "\n";
   m._debug();
   
-  kokopuffs::map<int, int> m2;
+  /* kokopuffs::map<int, int> m2; */
   
   return 0;
 }
