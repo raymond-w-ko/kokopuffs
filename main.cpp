@@ -1,9 +1,9 @@
-#include "rko_map.h"
+#include "kokopuffs/map.hpp"
 #include <string>
 #include <iostream>
 
 int main() {
-  rko_map<std::string, int> m(8);
+  kokopuffs::map<std::string, int> m(8);
   
   m["foo"] = 1;
   m._debug();
@@ -54,7 +54,7 @@ int main() {
   std::cout << m["xyzzy"] << "\n";
   m._debug();
   
-  rko_map<int, int> m2;
+  kokopuffs::map<int, int> m2;
   
   return 0;
 }

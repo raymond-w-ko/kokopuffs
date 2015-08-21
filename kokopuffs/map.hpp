@@ -6,8 +6,10 @@
 #include <iostream>
 #include <iomanip>
 
+namespace kokopuffs {
+
 template<typename Key, typename Value>
-class rko_map {
+class map {
   enum {
     kInitialSize = 16,
   };
@@ -45,7 +47,7 @@ class rko_map {
   }
   
  public:
-  rko_map(size_t initial_table_size = kInitialSize, float load_factor = 0.5)
+  map(size_t initial_table_size = kInitialSize, float load_factor = 0.5)
       : load_factor_(load_factor),
         item_count_(0)
   {
@@ -53,7 +55,7 @@ class rko_map {
     table_ = create_table(bucket_count_);
   }
   
-  ~rko_map() {
+  ~map() {
     delete_table(table_, bucket_count_);
   }
   
@@ -211,3 +213,5 @@ refind_slot:
   Key invalid_key_;
   Entry* table_;
 };
+
+}
