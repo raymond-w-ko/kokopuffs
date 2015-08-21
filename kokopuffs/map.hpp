@@ -30,7 +30,7 @@ class map {
     size_t intended_bucket;
 #endif
   };
-  
+
  private:
   static Entry* create_table(size_t bucket_count) {
     size_t n = bucket_count * sizeof(Entry);
@@ -53,7 +53,7 @@ class map {
     ::memset(table, 0, n);
     return table;
   }
-  
+
   static void delete_table(Entry* table, size_t bucket_count) {
     for (size_t i = 0; i < bucket_count; ++i) {
       Entry& entry = table[i];
@@ -64,7 +64,7 @@ class map {
     }
     free(table);
   }
-  
+
  public:
   map(size_t initial_table_size = kInitialSize)
       : bucket_count_(kInitialSize),
@@ -74,34 +74,85 @@ class map {
   {
     table_ = create_table(bucket_count_);
   }
-  
+
+  map(const map<Key, Value>& other)
+      : bucket_count_(other.bucket_count_),
+        item_count_(0),
+        max_load_factor_(other.max_load_factor_) {
+    table_ = create_table(bucket_count_);
+    _copy_elements_from_table(other.table_, other.bucket_count_);
+  }
+
+  map<Key, Value>& operator=(const map<Key, Value>& other) {
+    if (&other == this)
+      return *this;
+
+    delete_table(table_, bucket_count_);
+
+    bucket_count_ = other.bucket_count_;
+    item_count_ = 0;
+    max_load_factor_ = other.max_load_factor_;
+    table_ = create_table(bucket_count_);
+    _copy_elements_from_table(other.table_, other.bucket_count_);
+
+    return *this;
+  }
+
+  map(map<Key, Value>&& other)
+      : bucket_count_(other.bucket_count_),
+        item_count_(other.item_count_),
+        max_load_factor_(other.max_load_factor_),
+        table_(other.table_) {
+    other.table_ = nullptr;
+    // this cheat will basically skip over key and value destructor, and we are
+    // luck that free() works with null pointers.
+    other.bucket_count_ = 0;
+  }
+
+  map<Key, Value>& operator=(map<Key, Value>&& other) {
+    if (&other == this)
+      return *this;
+
+    delete_table(table_, bucket_count_);
+
+    bucket_count_ = other.bucket_count_;
+    item_count_ = other.item_count_;
+    max_load_factor_ = other.max_load_factor_;
+    table_ = other.table_;
+
+    other.table_ = nullptr;
+    // see move constructor above
+    other.bucket_count_ = 0;
+    return *this;
+  }
+
   ~map() {
     delete_table(table_, bucket_count_);
   }
-  
+
   Value& operator[](const Key& key) {
     uint32_t hash = get_hash(key);
     return _find_or_insert(key, hash);
   }
-  
+
   size_t erase(const Key& key) {
     uint32_t hash = get_hash(key);
     size_t index = (size_t)-1;
     if (!_find(key, hash, index)) {
       return 0;
     }
-    
+
     Entry& entry = table_[index];
     entry.hash = 0;
     entry.initialized = false;
     entry.key.~Key();
     entry.value.~Value();
-    
+
     --item_count_;
-    
+
     return 1;
   }
-  
+
   void _debug() {
     using namespace std;
     stringstream ss;
@@ -131,7 +182,7 @@ class map {
     ss << "----------------------------------------\n";
     cout << ss.str();
   }
-  
+
   uint32_t get_hash(const Key& key) {
     /* return 1; */
     uint32_t hash = 5381;
@@ -140,11 +191,11 @@ class map {
     }
     return hash;
   }
-  
+
   size_t size() const noexcept {
     return item_count_;
   }
-  
+
   float load_factor() const noexcept {
     return this->size() / static_cast<float>(bucket_count_);
   }
@@ -161,22 +212,22 @@ refind_slot:
     if (_find(key, hash, index)) {
       return table_[index].value;
     }
-    
+
     if (_maybe_resize()) {
       goto refind_slot;
     }
-    
+
     Entry& entry = table_[index];
     _emplace_entry(entry, key, hash);
     return entry.value;
   }
-  
+
   template <typename... Args>
   void _emplace_entry(Entry& entry,
                       const Key& key, uint32_t hash, Args&&... args) {
     if (entry.initialized)
       return;
-    
+
     item_count_++;
     entry.hash = hash;
     new (&entry.key) Key(key);
@@ -187,19 +238,26 @@ refind_slot:
     entry.intended_bucket = hash % bucket_count_;
 #endif
   }
-  
+
   bool _maybe_resize(bool force = false) {
     if (!force && this->load_factor() <= max_load_factor_)
       return false;
-    
+
     Entry* oldtable = table_;
-    const size_t oldcount = bucket_count_;
+    const size_t old_bucket_count = bucket_count_;
 
     bucket_count_ *= 2;
     item_count_ = 0;
     table_ = create_table(bucket_count_);
 
-    for (size_t i = 0; i < oldcount; ++i) {
+    _copy_elements_from_table(oldtable, old_bucket_count);
+    delete_table(oldtable, old_bucket_count);
+
+    return true;
+  }
+
+  void _copy_elements_from_table(Entry* oldtable, const size_t old_bucket_count) {
+    for (size_t i = 0; i < old_bucket_count; ++i) {
       const Entry& oldentry = oldtable[i];
       if (oldentry.initialized) {
 #ifdef KOKODEBUG
@@ -214,22 +272,18 @@ refind_slot:
         _emplace_entry(newentry, oldentry.key, oldentry.hash, oldentry.value);
       }
     }
-
-    delete_table(oldtable, oldcount);
-    
-    return true;
   }
-  
+
   bool _find(const Key& key, uint32_t hash, size_t& found_index) {
     size_t index = hash % bucket_count_;
     /* std::cout << "_find " << key << " " << hash << " " << index << "\n"; */
     size_t probe_count = 0;
     size_t emtpy_index = (size_t)-1;
     bool found_empty_index = false;
-    
+
     while (probe_count <= bucket_count_) {
       Entry& entry = table_[index];
-      
+
       if (!entry.busy) {
         if (found_empty_index)
           found_index = emtpy_index;
@@ -238,29 +292,29 @@ refind_slot:
         /* std::cout << "found_index " << found_index << "\n"; */
         return false;
       }
-      
+
       if (!entry.initialized && !found_empty_index) {
         found_empty_index = true;
         emtpy_index = index;
         /* std::cout << "empty " << index << "\n"; */
       }
-      
+
       if (entry.initialized && entry.hash == hash && entry.key == key) {
         found_index = index;
         return true;
       }
-      
+
       ++index;
       if (index == bucket_count_)
         index = 0;
       ++probe_count;
     }
-    
+
     throw std::runtime_error(
         "rko_map hash table completely full, this should not have happened.");
     return false;
   }
-  
+
   size_t bucket_count_;
   size_t item_count_;
   float max_load_factor_;

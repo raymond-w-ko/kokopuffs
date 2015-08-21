@@ -55,7 +55,11 @@ int main() {
   std::cout << m["xyzzy"] << "\n";
   m._debug();
   
-  /* kokopuffs::map<int, int> m2; */
+  kokopuffs::map<std::string, int> copy1(m);
+  copy1 = m;
+  kokopuffs::map<std::string, int> copy2(std::move(m));
+  kokopuffs::map<std::string, int> copy3;
+  copy3 = std::move(m);
   
   return 0;
 }
