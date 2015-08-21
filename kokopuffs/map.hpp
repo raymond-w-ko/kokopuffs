@@ -66,10 +66,11 @@ class map {
   }
   
  public:
-  map(size_t initial_table_size = kInitialSize, float load_factor = 0.5)
+  map(size_t initial_table_size = kInitialSize)
       : bucket_count_(kInitialSize),
         item_count_(0),
-        load_factor_(load_factor)
+        // default factor used in Google's densehashtable.h
+        max_load_factor_(0.5f)
   {
     table_ = create_table(bucket_count_);
   }
@@ -112,7 +113,7 @@ class map {
     ss << "sizeof(Value): " << sizeof(Value) << "\n";
     ss << "item_count_: " << item_count_ << "\n";
     ss << "bucket_count_: " << bucket_count_ << "\n";
-    ss << "load: " << (float)item_count_ / bucket_count_ << "\n";
+    ss << "load: " << load_factor() << "\n";
     for (size_t i = 0; i < bucket_count_; ++i) {
       Entry& entry = table_[i];
       ss << "bucket " << i << ": " << " busy " << entry.busy << " "
@@ -144,6 +145,15 @@ class map {
     return item_count_;
   }
   
+  float load_factor() const noexcept {
+    return this->size() / static_cast<float>(bucket_count_);
+  }
+
+  void max_load_factor(float z) {
+    max_load_factor_ = std::max(0.001f, std::min(z, 1.0f));
+    _maybe_resize();
+  }
+
  private:
   Value& _find_or_insert(const Key& key, uint32_t hash) {
 refind_slot:
@@ -152,7 +162,7 @@ refind_slot:
       return table_[index].value;
     }
     
-    if (maybe_resize()) {
+    if (_maybe_resize()) {
       goto refind_slot;
     }
     
@@ -178,8 +188,8 @@ refind_slot:
 #endif
   }
   
-  bool maybe_resize() {
-    if (((float)item_count_ / bucket_count_) <= load_factor_)
+  bool _maybe_resize(bool force = false) {
+    if (!force && this->load_factor() <= max_load_factor_)
       return false;
     
     Entry* oldtable = table_;
@@ -253,7 +263,7 @@ refind_slot:
   
   size_t bucket_count_;
   size_t item_count_;
-  float load_factor_;
+  float max_load_factor_;
   Entry* table_;
 };
 
