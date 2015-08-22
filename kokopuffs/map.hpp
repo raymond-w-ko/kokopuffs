@@ -259,12 +259,17 @@ class map {
     cout << ss.str();
   }
 
-  uint32_t get_hash(const Key& key) {
-    uint32_t hash = 5381;
-    for (size_t i = 0; i < key.size(); ++i) {
-      hash = hash * 31 ^ key[i];
+  uint32_t fnv1a(const uint8_t* data, size_t n) {
+    uint32_t hash = 2166136261; // offset_basis
+    for (size_t i = 0; i < n; ++i) {
+      hash ^= data[i];
+      hash *= 16777619; // FNV_prime
     }
     return hash;
+  }
+
+  uint32_t get_hash(const Key& key) {
+    return fnv1a(reinterpret_cast<const uint8_t*>(&key[0]), key.size());
   }
 
   size_t size() const noexcept {
