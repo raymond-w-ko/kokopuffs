@@ -10,67 +10,38 @@
 #include <sstream>
 
 #if defined(_DEBUG) || defined(DEBUG) && !defined(NDEBUG) && !defined(_NDEBUG)
-#define KOKODEBUG
+#define KOKOPUFFS_DEBUG
 #endif
+/* #define KOKOPUFFS_MAP_COLLISION_DEBUG */
+
+// default factor used in Google's densehashtable.h
+#define KOKOPUFFS_MAP_INTIAL_SIZE 16
+#define KOKOPUFFS_MAP_DEFAULT_MAX_LOAD_FACTOR 0.5f
+#define KOKOPUFFS_MAP_DEFAULT_MIN_LOAD_FACTOR 0.2f
+
 
 namespace kokopuffs {
 
 template<typename Key, typename Value>
 class map {
-  enum {
-    kInitialSize = 16,
-  };
+ public:
   struct Entry {
-    bool initialized;
-    bool busy;
-    uint32_t hash;
     Key key;
     Value value;
-#ifdef KOKODEBUG
+#ifdef KOKOPUFFS_MAP_COLLISION_DEBUG
     size_t intended_bucket;
 #endif
   };
 
- private:
-  static Entry* create_table(size_t bucket_count) {
-    size_t n = bucket_count * sizeof(Entry);
-    Entry* table  = (Entry*)malloc(n);
-    /*
-    for (size_t i = 0; i < bucket_count; ++i) {
-      Entry& entry = table[i];
-      entry.initialized = false;
-      entry.busy = false;
-      entry.hash = 0;
-#ifdef KOKODEBUG
-      entry.intended_bucket = 0;
-#endif
-    }
-    */
-    // since all fields are mostly equivalent to 0, we can cheat and use
-    // memset, however, in case we need to use structures that aren't
-    // equivalent to zero, then we have to delete below and initialize in a for
-    // loop above.
-    ::memset(table, 0, n);
-    return table;
-  }
-
-  static void delete_table(Entry* table, size_t bucket_count) {
-    for (size_t i = 0; i < bucket_count; ++i) {
-      Entry& entry = table[i];
-      if (entry.initialized) {
-        entry.key.~Key();
-        entry.value.~Value();
-      }
-    }
-    free(table);
-  }
-
- public:
-  map(size_t initial_table_size = kInitialSize)
-      : bucket_count_(kInitialSize),
+  map(const size_t initial_table_size = KOKOPUFFS_MAP_INTIAL_SIZE)
+      : bucket_count_(initial_table_size),
         item_count_(0),
-        // default factor used in Google's densehashtable.h
-        max_load_factor_(0.5f)
+        max_load_factor_(KOKOPUFFS_MAP_DEFAULT_MAX_LOAD_FACTOR),
+        min_load_factor_(KOKOPUFFS_MAP_DEFAULT_MIN_LOAD_FACTOR)
+#ifdef KOKOPUFFS_DEBUG
+        , has_set_empty_key_(false)
+        , has_set_deleted_key_(false)
+#endif
   {
     table_ = create_table(bucket_count_);
   }
@@ -78,22 +49,62 @@ class map {
   map(const map<Key, Value>& other)
       : bucket_count_(other.bucket_count_),
         item_count_(0),
-        max_load_factor_(other.max_load_factor_) {
+        max_load_factor_(other.max_load_factor_),
+        min_load_factor_(other.min_load_factor_)
+#ifdef KOKOPUFFS_DEBUG
+        , has_set_empty_key_(other.has_set_empty_key_)
+        , has_set_deleted_key_(other.has_set_deleted_key_)
+#endif
+  {
     table_ = create_table(bucket_count_);
-    _copy_elements_from_table(other.table_, other.bucket_count_);
+
+    if (other.empty_key_) {
+      empty_key_ = std::unique_ptr<Key>(new Key(*other.empty_key_));
+    }
+    if (other.deleted_key_) {
+      deleted_key_ = std::unique_ptr<Key>(new Key(*other.deleted_key_));
+    }
+    _copy_elements_from_table(
+        other.table_, other.bucket_count_,
+        *other.empty_key_,
+        static_cast<bool>(other.deleted_key_),
+        other.deleted_key_.get());
   }
 
   map<Key, Value>& operator=(const map<Key, Value>& other) {
     if (&other == this)
       return *this;
 
-    delete_table(table_, bucket_count_);
+#ifdef KOKOPUFFS_DEBUG
+    if (!has_set_empty_key_)
+      throw std::runtime_error("kokopuffs::map.operator=(map&) empty_key_ not set");
+#endif
+    delete_table(table_, bucket_count_,
+                 *empty_key_,
+                 static_cast<bool>(deleted_key_),
+                 deleted_key_.get());
 
     bucket_count_ = other.bucket_count_;
     item_count_ = 0;
     max_load_factor_ = other.max_load_factor_;
+    min_load_factor_ = other.min_load_factor_;
     table_ = create_table(bucket_count_);
-    _copy_elements_from_table(other.table_, other.bucket_count_);
+#ifdef KOKOPUFFS_DEBUG
+    has_set_empty_key_ = other.has_set_empty_key_;
+    has_set_deleted_key_ = other.has_set_deleted_key_;
+#endif
+
+    if (other.empty_key_) {
+      empty_key_ = std::unique_ptr<Key>(new Key(*other.empty_key_));
+    }
+    if (other.deleted_key_) {
+      deleted_key_ = std::unique_ptr<Key>(new Key(*other.deleted_key_));
+    }
+    _copy_elements_from_table(
+        other.table_, other.bucket_count_,
+        *other.empty_key_,
+        static_cast<bool>(other.deleted_key_),
+        other.deleted_key_.get());
 
     return *this;
   }
@@ -102,50 +113,110 @@ class map {
       : bucket_count_(other.bucket_count_),
         item_count_(other.item_count_),
         max_load_factor_(other.max_load_factor_),
-        table_(other.table_) {
+        min_load_factor_(other.min_load_factor_),
+        table_(other.table_)
+#ifdef KOKOPUFFS_DEBUG
+        , has_set_empty_key_(other.has_set_empty_key_)
+        , has_set_deleted_key_(other.has_set_deleted_key_)
+#endif
+  {
     other.table_ = nullptr;
     // this cheat will basically skip over key and value destructor, and we are
     // luck that free() works with null pointers.
     other.bucket_count_ = 0;
+
+    other.empty_key_.swap(empty_key_);
+    other.deleted_key_.swap(deleted_key_);
   }
 
   map<Key, Value>& operator=(map<Key, Value>&& other) {
     if (&other == this)
       return *this;
 
-    delete_table(table_, bucket_count_);
+#ifdef KOKOPUFFS_DEBUG
+    if (!has_set_empty_key_)
+      throw std::runtime_error("kokopuffs::map.operator=(map&&) empty_key_ not set");
+#endif
+    delete_table(table_, bucket_count_,
+                 *empty_key_,
+                 static_cast<bool>(deleted_key_),
+                 deleted_key_.get());
 
     bucket_count_ = other.bucket_count_;
     item_count_ = other.item_count_;
     max_load_factor_ = other.max_load_factor_;
+    min_load_factor_ = other.min_load_factor_;
     table_ = other.table_;
+#ifdef KOKOPUFFS_DEBUG
+    has_set_empty_key_ = other.has_set_empty_key_;
+    has_set_deleted_key_ = other.has_set_deleted_key_;
+#endif
 
     other.table_ = nullptr;
     // see move constructor above
     other.bucket_count_ = 0;
+
+    other.empty_key_.swap(empty_key_);
+    other.deleted_key_.swap(deleted_key_);
+
     return *this;
   }
 
   ~map() {
-    delete_table(table_, bucket_count_);
+#ifdef KOKOPUFFS_DEBUG
+    if (!has_set_empty_key_)
+      throw std::runtime_error("kokopuffs::map.~map() empty_key_ not set");
+#endif
+    delete_table(table_, bucket_count_,
+                 *empty_key_,
+                 static_cast<bool>(deleted_key_),
+                 deleted_key_.get());
+  }
+
+  void set_empty_key(const Key& key) {
+    empty_key_ = std::unique_ptr<Key>(new Key(key));
+#ifdef KOKOPUFFS_DEBUG
+    has_set_empty_key_ = true;
+#endif
+
+    for (size_t i = 0; i < bucket_count_; ++i) {
+      Entry& entry = table_[i];
+      new (&entry.key) Key(*empty_key_);
+    }
+  }
+
+
+  void set_deleted_key(const Key& key) {
+    deleted_key_ = std::unique_ptr<Key>(new Key(key));
+#ifdef KOKOPUFFS_DEBUG
+    has_set_deleted_key_ = true;
+#endif
   }
 
   Value& operator[](const Key& key) {
-    uint32_t hash = get_hash(key);
+#ifdef KOKOPUFFS_DEBUG
+    if (!has_set_empty_key_)
+      throw std::runtime_error("kokopuffs::map.operator[] empty_key_ not set");
+#endif
+
+    const uint32_t hash = get_hash(key);
     return _find_or_insert(key, hash);
   }
 
   size_t erase(const Key& key) {
-    uint32_t hash = get_hash(key);
+#ifdef KOKOPUFFS_DEBUG
+    if (!has_set_deleted_key_)
+      throw std::runtime_error("kokopuffs::map.erase() deleted_key_ not set");
+#endif
+
+    const uint32_t hash = get_hash(key);
     size_t index = (size_t)-1;
-    if (!_find(key, hash, index)) {
+    if (!_find_bucket(key, hash, index)) {
       return 0;
     }
 
     Entry& entry = table_[index];
-    entry.hash = 0;
-    entry.initialized = false;
-    entry.key.~Key();
+    entry.key = *deleted_key_;
     entry.value.~Value();
 
     --item_count_;
@@ -154,12 +225,15 @@ class map {
   }
 
   void _debug() {
+#ifdef KOKOPUFFS_DEBUG
+    if (!has_set_empty_key_)
+      throw std::runtime_error("kokopuffs::map._debug() empty_key_ not set");
+#endif
+
     using namespace std;
     stringstream ss;
     /* ss << hex; */
     ss << "sizeof(Entry): " << sizeof(Entry) << "\n";
-    ss << "sizeof(bool): " << sizeof(bool) << "\n";
-    ss << "sizeof(uint32_t): " << sizeof(uint32_t) << "\n";
     ss << "sizeof(Key): " << sizeof(Key) << "\n";
     ss << "sizeof(Value): " << sizeof(Value) << "\n";
     ss << "item_count_: " << item_count_ << "\n";
@@ -167,15 +241,17 @@ class map {
     ss << "load: " << load_factor() << "\n";
     for (size_t i = 0; i < bucket_count_; ++i) {
       Entry& entry = table_[i];
-      ss << "bucket " << i << ": " << " busy " << entry.busy << " "
-           << "hash " << std::hex << entry.hash << " "
-#ifdef KOKODEBUG
-           << "intended_bucket: " << entry.intended_bucket << " "
-#endif
-            ;
-      if (entry.initialized) {
+      ss << "bucket " << i << ": ";
+      if (entry.key == *empty_key_) {
+          ss << "empty ";
+      } else if (deleted_key_ && entry.key == *deleted_key_) {
+          ss << "deleted ";
+      } else {
         ss << "key: " << entry.key << " ";
-        ss << "value: " << entry.value << "";
+        ss << "value: " << entry.value << " ";
+#ifdef KOKOPUFFS_MAP_COLLISION_DEBUG
+        ss << "intended_bucket: " << entry.intended_bucket << " ";
+#endif
       }
       ss << "\n";
     }
@@ -184,7 +260,6 @@ class map {
   }
 
   uint32_t get_hash(const Key& key) {
-    /* return 1; */
     uint32_t hash = 5381;
     for (size_t i = 0; i < key.size(); ++i) {
       hash = hash * 31 ^ key[i];
@@ -205,11 +280,41 @@ class map {
     _maybe_resize();
   }
 
+  void min_load_factor(float z) {
+    min_load_factor_ = std::max(0.0f, std::min(z, max_load_factor_));
+    _maybe_resize();
+  }
+
  private:
+  static Entry* create_table(size_t bucket_count) {
+    size_t n = bucket_count * sizeof(Entry);
+    Entry* table  = (Entry*)malloc(n);
+    ::memset(table, 0, n);
+    return table;
+  }
+
+  static void delete_table(Entry* table,
+                           const size_t bucket_count,
+                           const Key& empty_key,
+                           const bool has_delete,
+                           const Key* deleted_key)
+  {
+    for (size_t i = 0; i < bucket_count; ++i) {
+      Entry& entry = table[i];
+      if (entry.key != empty_key) {
+        if (!has_delete || (has_delete && entry.key != *deleted_key)) {
+          entry.value.~Value();
+        }
+      }
+      entry.key.~Key();
+    }
+    ::free(table);
+  }
+
   Value& _find_or_insert(const Key& key, uint32_t hash) {
 refind_slot:
     size_t index = (size_t)-1;
-    if (_find(key, hash, index)) {
+    if (_find_bucket(key, hash, index)) {
       return table_[index].value;
     }
 
@@ -225,81 +330,102 @@ refind_slot:
   template <typename... Args>
   void _emplace_entry(Entry& entry,
                       const Key& key, uint32_t hash, Args&&... args) {
-    if (entry.initialized)
-      return;
+#ifdef KOKOPUFFS_DEBUG
+    if (!has_set_empty_key_)
+      throw std::runtime_error("kokopuffs::map.deleted_key_ not set");
+#endif
+
+    if (entry.key != *empty_key_) {
+      if (!deleted_key_) {
+        return;
+      } else {
+        if (entry.key != *deleted_key_) {
+          return;
+        }
+      }
+    }
 
     item_count_++;
-    entry.hash = hash;
+    entry.key.~Key();
     new (&entry.key) Key(key);
     new (&entry.value) Value(args...);
-    entry.initialized = true;
-    entry.busy = true;
-#ifdef KOKODEBUG
+#ifdef KOKOPUFFS_MAP_COLLISION_DEBUG
     entry.intended_bucket = hash % bucket_count_;
 #endif
   }
 
   bool _maybe_resize(bool force = false) {
+    // TODO: account for min_load_factor_
     if (!force && this->load_factor() <= max_load_factor_)
       return false;
 
-    Entry* oldtable = table_;
+    Entry* old_table = table_;
     const size_t old_bucket_count = bucket_count_;
 
     bucket_count_ *= 2;
     item_count_ = 0;
     table_ = create_table(bucket_count_);
+    set_empty_key(*empty_key_);
 
-    _copy_elements_from_table(oldtable, old_bucket_count);
-    delete_table(oldtable, old_bucket_count);
+    _copy_elements_from_table(
+        old_table, old_bucket_count,
+        *empty_key_,
+        static_cast<bool>(deleted_key_),
+        deleted_key_.get());
+    delete_table(old_table, old_bucket_count,
+                 *empty_key_,
+                 static_cast<bool>(deleted_key_),
+                 deleted_key_.get());
 
     return true;
   }
 
-  void _copy_elements_from_table(Entry* oldtable, const size_t old_bucket_count) {
+  void _copy_elements_from_table(Entry* old_table,
+                                 const size_t old_bucket_count,
+                                 const Key& old_empty_key,
+                                 const bool old_has_delete,
+                                 const Key* old_deleted_key) {
     for (size_t i = 0; i < old_bucket_count; ++i) {
-      const Entry& oldentry = oldtable[i];
-      if (oldentry.initialized) {
-#ifdef KOKODEBUG
-        assert(oldentry.initialized);
-#endif
-        /* (*this)[oldentry.key] = oldentry.value; */
-        size_t newindex = (size_t)-1;
-        // assume that this will always be successful since we are resizing and
-        // this it will always fit
-        _find(oldentry.key, oldentry.hash, newindex);
-        Entry& newentry = table_[newindex];
-        _emplace_entry(newentry, oldentry.key, oldentry.hash, oldentry.value);
-      }
+      const Entry& old_entry = old_table[i];
+      if (old_entry.key == old_empty_key)
+        continue;
+      if (old_has_delete && old_entry.key == *old_deleted_key)
+        continue;
+
+      const uint32_t hash = get_hash(old_entry.key);
+      size_t new_index = (size_t)-1;
+      // assume that this will always be successful since we are resizing and
+      // this it will always fit
+      _find_bucket(old_entry.key, hash, new_index);
+      Entry& new_entry = table_[new_index];
+      _emplace_entry(new_entry, old_entry.key, hash, old_entry.value);
     }
   }
 
-  bool _find(const Key& key, uint32_t hash, size_t& found_index) {
+  bool _find_bucket(const Key& key, const uint32_t hash, size_t& found_index) {
+    // TODO: better mapping to bucket index
     size_t index = hash % bucket_count_;
-    /* std::cout << "_find " << key << " " << hash << " " << index << "\n"; */
     size_t probe_count = 0;
     size_t emtpy_index = (size_t)-1;
-    bool found_empty_index = false;
+    bool found_deleted_index = false;
 
     while (probe_count <= bucket_count_) {
       Entry& entry = table_[index];
 
-      if (!entry.busy) {
-        if (found_empty_index)
+      if (entry.key == *empty_key_) {
+        if (found_deleted_index)
           found_index = emtpy_index;
         else
           found_index = index;
-        /* std::cout << "found_index " << found_index << "\n"; */
         return false;
       }
 
-      if (!entry.initialized && !found_empty_index) {
-        found_empty_index = true;
+      if (!found_deleted_index && deleted_key_ && entry.key == *deleted_key_) {
+        found_deleted_index = true;
         emtpy_index = index;
-        /* std::cout << "empty " << index << "\n"; */
       }
 
-      if (entry.initialized && entry.hash == hash && entry.key == key) {
+      if (entry.key == key) {
         found_index = index;
         return true;
       }
@@ -318,11 +444,18 @@ refind_slot:
   size_t bucket_count_;
   size_t item_count_;
   float max_load_factor_;
+  float min_load_factor_;
+  std::unique_ptr<Key> empty_key_;
+  std::unique_ptr<Key> deleted_key_;
   Entry* table_;
+#ifdef KOKOPUFFS_DEBUG
+  bool has_set_empty_key_;
+  bool has_set_deleted_key_;
+#endif
 };
 
-#ifdef KOKODEBUG
-#undef KOKODEBUG
+#ifdef KOKOPUFFS_DEBUG
+#undef KOKOPUFFS_DEBUG
 #endif
 
 }
