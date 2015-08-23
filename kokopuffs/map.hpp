@@ -12,7 +12,7 @@
 #if defined(_DEBUG) || defined(DEBUG) && !defined(NDEBUG) && !defined(_NDEBUG)
 #define KOKOPUFFS_DEBUG
 #endif
-/* #define KOKOPUFFS_MAP_COLLISION_DEBUG */
+#define KOKOPUFFS_MAP_COLLISION_DEBUG
 
 // default factor used in Google's densehashtable.h
 #define KOKOPUFFS_MAP_INTIAL_SIZE 16
@@ -355,19 +355,26 @@ refind_slot:
     new (&entry.key) Key(key);
     new (&entry.value) Value(args...);
 #ifdef KOKOPUFFS_MAP_COLLISION_DEBUG
-    entry.intended_bucket = hash % bucket_count_;
+    entry.intended_bucket = hash & (bucket_count_ - 1);
 #endif
   }
 
-  bool _maybe_resize(bool force = false) {
-    // TODO: account for min_load_factor_
-    if (!force && this->load_factor() <= max_load_factor_)
+  bool _maybe_resize() {
+    size_t new_bucket_count;
+    const float load = this->load_factor();
+    if (load > max_load_factor_) {
+      new_bucket_count = bucket_count_ * 2;
+    } else if (bucket_count_ > KOKOPUFFS_MAP_INTIAL_SIZE &&
+               load < min_load_factor_) {
+      new_bucket_count = bucket_count_ / 2;
+    } else {
       return false;
+    }
 
     Entry* old_table = table_;
     const size_t old_bucket_count = bucket_count_;
 
-    bucket_count_ *= 2;
+    bucket_count_ = new_bucket_count;
     item_count_ = 0;
     table_ = create_table(bucket_count_);
     set_empty_key(*empty_key_);
@@ -408,18 +415,20 @@ refind_slot:
   }
 
   bool _find_bucket(const Key& key, const uint32_t hash, size_t& found_index) {
-    // TODO: better mapping to bucket index
-    size_t index = hash % bucket_count_;
+    const size_t mask = bucket_count_ - 1;
+    const size_t start_index = hash & mask;
     size_t probe_count = 0;
-    size_t emtpy_index = (size_t)-1;
+    size_t deleted_index = (size_t)-1;
     bool found_deleted_index = false;
 
     while (probe_count <= bucket_count_) {
+      size_t triangle_number = (probe_count * (probe_count + 1)) / 2;
+      size_t index = (start_index + triangle_number) & mask;
       Entry& entry = table_[index];
 
       if (entry.key == *empty_key_) {
         if (found_deleted_index)
-          found_index = emtpy_index;
+          found_index = deleted_index;
         else
           found_index = index;
         return false;
@@ -427,7 +436,7 @@ refind_slot:
 
       if (!found_deleted_index && deleted_key_ && entry.key == *deleted_key_) {
         found_deleted_index = true;
-        emtpy_index = index;
+        deleted_index = index;
       }
 
       if (entry.key == key) {
@@ -441,8 +450,11 @@ refind_slot:
       ++probe_count;
     }
 
-    throw std::runtime_error(
-        "rko_map hash table completely full, this should not have happened.");
+    if (found_deleted_index) {
+      found_index = deleted_index;
+    } else {
+      throw std::runtime_error("rko_map hash table completely full");
+    }
     return false;
   }
 

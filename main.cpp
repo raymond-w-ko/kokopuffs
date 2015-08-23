@@ -4,7 +4,7 @@
 #include <iostream>
 
 int main() {
-  kokopuffs::map<std::string, int> m(8);
+  kokopuffs::map<std::string, int> m;
   m.set_empty_key("");
   m.set_deleted_key("<deleted>");
 
@@ -29,10 +29,19 @@ int main() {
   m._debug();
 
   // crash if you uncomment this without resizing
-  m["epsilon"] = 8;
+  m["epsilon"] = 9;
   m._debug();
-  /* m["chi"] = 9; */
-  /* m["rho"] = 10; */
+  m["chi"] = 10;
+  m._debug();
+  m["rho"] = 11;
+  m._debug();
+  m["upsilon"] = 12;
+  m._debug();
+  m["omega"] = 13;
+  m["terran"] = 14;
+  m["protoss"] = 15;
+  m["zerg"] = 16;
+  m._debug();
 
   m.erase("foo");
   m._debug();
@@ -45,16 +54,18 @@ int main() {
   m.erase("bazz");
   m._debug();
   m.erase("alpha");
-  m._debug();
   m.erase("beta");
-  m._debug();
   m.erase("delta");
-  m._debug();
   m.erase("epsilon");
+  m._debug();
+  m.erase("omega");
+  m.erase("terran");
+  m.erase("zerg");
+  m.erase("protoss");
   m._debug();
 
   std::cout << m["foo"] << "\n";
-  std::cout << m["xyzzy"] << "\n";
+  std::cout << m["bar"] << "\n";
   m._debug();
 
   kokopuffs::map<std::string, int> copy1(m);
