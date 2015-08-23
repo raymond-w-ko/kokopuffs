@@ -9,9 +9,10 @@ all:
 	./test 2>&1
 
 debug:
-	clang++ \
+	g++ \
 		-DDEBUG \
-		-Wall -std=c++11 -stdlib=libc++ -lc++abi \
+		-Wall -std=c++11 \
 		-O0 -g3 -fstack-protector-all \
+		-lboost_system -lboost_chrono \
 		-o test main.cpp 2>&1
-	valgrind ./test 2>&1
+	valgrind --leak-check=full ./test 2>&1

@@ -57,11 +57,13 @@ class map {
         , has_set_deleted_key_(other.has_set_deleted_key_)
 #endif
   {
+#ifdef KOKOPUFFS_DEBUG
+    if (!other.has_set_empty_key_)
+      throw std::runtime_error(
+          "kokopuffs::map.map(map&) other empty_key_ not set");
+#endif
     table_ = create_table(bucket_count_);
-
-    if (other.empty_key_) {
-      empty_key_ = std::unique_ptr<Key>(new Key(*other.empty_key_));
-    }
+    this->set_empty_key(*other.empty_key_);
     if (other.deleted_key_) {
       deleted_key_ = std::unique_ptr<Key>(new Key(*other.deleted_key_));
     }
@@ -78,7 +80,11 @@ class map {
 
 #ifdef KOKOPUFFS_DEBUG
     if (!has_set_empty_key_)
-      throw std::runtime_error("kokopuffs::map.operator=(map&) empty_key_ not set");
+      throw std::runtime_error(
+          "kokopuffs::map.operator=(map&) empty_key_ not set");
+    if (!has_set_empty_key_)
+      throw std::runtime_error(
+          "kokopuffs::map.operator=(map&) other empty_key_ not set");
 #endif
     delete_table(table_, bucket_count_,
                  *empty_key_,
@@ -89,15 +95,13 @@ class map {
     item_count_ = 0;
     max_load_factor_ = other.max_load_factor_;
     min_load_factor_ = other.min_load_factor_;
-    table_ = create_table(bucket_count_);
 #ifdef KOKOPUFFS_DEBUG
     has_set_empty_key_ = other.has_set_empty_key_;
     has_set_deleted_key_ = other.has_set_deleted_key_;
 #endif
 
-    if (other.empty_key_) {
-      empty_key_ = std::unique_ptr<Key>(new Key(*other.empty_key_));
-    }
+    table_ = create_table(bucket_count_);
+    this->set_empty_key(*other.empty_key_);
     if (other.deleted_key_) {
       deleted_key_ = std::unique_ptr<Key>(new Key(*other.deleted_key_));
     }

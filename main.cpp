@@ -1,6 +1,7 @@
 #include "kokopuffs/map.hpp"
 #include "kokopuffs/max_heap.hpp"
 #include "kokopuffs/min_heap.hpp"
+#include "kokopuffs/algorithm.hpp"
 #include "Stopwatch.hpp"
 
 #include <string>
@@ -76,22 +77,26 @@ void test_map() {
   m._debug();
 
   kokopuffs::map<std::string, int> copy1(m);
-  copy1.set_empty_key("");
   copy1 = m;
   kokopuffs::map<std::string, int> copy2(std::move(m));
   kokopuffs::map<std::string, int> copy3;
   copy3.set_empty_key("");
   copy3 = std::move(copy1);
 
-  kokopuffs::map<std::string, std::string> string_map;
-  string_map.set_empty_key("");
-  string_map._debug();
+  kokopuffs::map<std::string, std::string> smap;
+  smap.set_empty_key("");
+  smap._debug();
+  smap["foo"] = "bar";
+  smap["fizz"] = "buzz";
+  smap._debug();
+  smap["fizz"] = "soda";
+  smap._debug();
 }
 
 void test_sort() {
   Stopwatch watch;
   
-  static const int n = 10000000;
+  static const int n = 1000000;
   std::minstd_rand re(42);  
   std::uniform_int_distribution<int> uniform_dist;
   
@@ -135,10 +140,18 @@ void test_sort() {
   if (min_heap_sorted_nums != std_sorted_nums) {
     throw std::runtime_error("minheap sorted numbers mismatch");
   }
+  
+  std::vector<int> quicksorted_nums(orignums);
+  watch.Start();
+  kokopuffs::quicksort(quicksorted_nums);
+  if (quicksorted_nums != std_sorted_nums) {
+    throw std::runtime_error("quicksort sorted numbers mismatch");
+  }
+  std::cout << "sorted via quicksort in " << watch.StopResultMilliseconds() << " ms\n";
 }
 
 int main() {
-  /* test_map(); */
-  test_sort();
+  test_map();
+  /* test_sort(); */
   return 0;
 }
