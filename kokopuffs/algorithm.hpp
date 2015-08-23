@@ -123,6 +123,8 @@ void _maxheapify(std::vector<T>& arr, const int64_t n, const int64_t parent) {
 
 template <typename T>
 void heapsort(std::vector<T>& arr) {
+  if (arr.size() == 0)
+    return;
   // build heap
   for (int64_t i = (arr.size() - 1) / 2; i >= 0; --i) {
     _maxheapify(arr, arr.size(), i);
