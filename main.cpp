@@ -1,9 +1,16 @@
 #include "kokopuffs/map.hpp"
+#include "kokopuffs/max_heap.hpp"
+#include "kokopuffs/min_heap.hpp"
+#include "Stopwatch.hpp"
 
 #include <string>
 #include <iostream>
+#include <vector>
+#include <random>
 
-int main() {
+using namespace kokopuffs;
+
+void test_map() {
   kokopuffs::map<std::string, int> m;
   m.set_empty_key("");
   m.set_deleted_key("<deleted>");
@@ -79,6 +86,59 @@ int main() {
   kokopuffs::map<std::string, std::string> string_map;
   string_map.set_empty_key("");
   string_map._debug();
+}
 
+void test_sort() {
+  Stopwatch watch;
+  
+  static const int n = 10000000;
+  std::minstd_rand re(42);  
+  std::uniform_int_distribution<int> uniform_dist;
+  
+  watch.Start();
+  std::vector<int> orignums;
+  orignums.reserve(n);
+  for (int i = 0; i < n; ++i) {
+    orignums.push_back(uniform_dist(re));
+  }
+  std::cout << "created " << n << " random nums in " << watch.StopResultMilliseconds() << " ms\n";
+  
+  std::vector<int> std_sorted_nums(orignums);
+  
+  watch.Start();
+  std::sort(std_sorted_nums.begin(), std_sorted_nums.end());
+  std::cout << "sorted via std::sort in " << watch.StopResultMilliseconds() << " ms\n";
+  
+  std::vector<int> test{1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+  max_heap<int> heap0(test);
+  for (int num : heap0.array_) {
+    std::cout << num << " ";
+  }
+  std::cout << "\n";
+  
+  while (!heap0.empty()) {
+    std::cout << heap0.extract() << " ";
+  }
+  std::cout << "\n";
+  
+  std::vector<int> min_heap_sorted_nums;
+  min_heap_sorted_nums.reserve(n);
+  watch.Start();
+  min_heap<int> heap(orignums);
+  std::cout << "minheapify in " << watch.StopResultMilliseconds() << " ms\n";
+  watch.Start();
+  while (!heap.empty()) {
+    min_heap_sorted_nums.push_back(heap.extract());
+  }
+  std::cout << "sorted in " << watch.StopResultMilliseconds() << " ms\n";
+  
+  if (min_heap_sorted_nums != std_sorted_nums) {
+    throw std::runtime_error("minheap sorted numbers mismatch");
+  }
+}
+
+int main() {
+  /* test_map(); */
+  test_sort();
   return 0;
 }
