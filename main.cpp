@@ -126,19 +126,13 @@ void test_sort() {
   }
   std::cout << "\n";
   
-  std::vector<int> min_heap_sorted_nums;
-  min_heap_sorted_nums.reserve(n);
+  std::vector<int> min_heap_sorted_nums(orignums);
   watch.Start();
-  min_heap<int> heap(orignums);
-  std::cout << "minheapify in " << watch.StopResultMilliseconds() << " ms\n";
-  watch.Start();
-  while (!heap.empty()) {
-    min_heap_sorted_nums.push_back(heap.extract());
-  }
-  std::cout << "sorted in " << watch.StopResultMilliseconds() << " ms\n";
+  kokopuffs::heapsort(min_heap_sorted_nums);
+  std::cout << "heapsorted in " << watch.StopResultMilliseconds() << " ms\n";
   
   if (min_heap_sorted_nums != std_sorted_nums) {
-    throw std::runtime_error("minheap sorted numbers mismatch");
+    throw std::runtime_error("heapsorted sorted numbers mismatch");
   }
   
   std::vector<int> quicksorted_nums(orignums);
@@ -148,10 +142,17 @@ void test_sort() {
     throw std::runtime_error("quicksort sorted numbers mismatch");
   }
   std::cout << "sorted via quicksort in " << watch.StopResultMilliseconds() << " ms\n";
+  
+  std::vector<int> mergesorted_nums(orignums);
+  watch.Start();
+  kokopuffs::mergesort(mergesorted_nums);
+  if (mergesorted_nums != std_sorted_nums)
+    throw std::runtime_error("mergesort sorted numbers mismatch");
+  std::cout << "sorted via mergesort in " << watch.StopResultMilliseconds() << " ms\n";
 }
 
 int main() {
-  test_map();
-  /* test_sort(); */
+  /* test_map(); */
+  test_sort();
   return 0;
 }
